@@ -1,0 +1,63 @@
+name: Deploy Utility to Website
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-industrial-thermometer-configurator
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify application quality
+        run: |
+          npm run typecheck
+          npm run lint
+          npm run test
+
+      - name: Build static application
+        run: npm run build
+
+      - name: Validate build output
+        run: |
+          test -f dist/app.html
+          test -f dist/favicon.svg
+          test -d dist/assets
+          grep -q 'src="./assets/' dist/app.html
+          grep -q 'href="./assets/' dist/app.html
+          grep -q 'href="./favicon.svg"' dist/app.html
+          ! grep -q 'src="/assets/' dist/app.html
+          ! grep -q 'href="/assets/' dist/app.html
+          ! grep -q 'href="/favicon.svg"' dist/app.html
+
+      - name: Push build to website repository
+        uses: cpina/github-action-push-to-another-repository@main
+        env:
+          API_TOKEN_GITHUB: ${{ secrets.DEPLOY_TOKEN }}
+        with:
+          source-directory: dist
+          destination-github-username: biosxxx
+          destination-repository-name: cadautoscript.com
+          target-directory: static/utility-apps/industrial-thermometer-configurator
+          target-branch: main
+          user-name: codex-deploy-bot
+          user-email: bot@biosxxx.com
+          commit-message: Deploy Industrial Thermometer Configurator from ${{ github.sha }}
