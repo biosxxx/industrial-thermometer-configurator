@@ -43,6 +43,7 @@ export const CONNECTION_DESIGNS: readonly ConnectionDesignOption[] = [
 export const CONNECTION_STANDARDS = [
   'G 1/2 B',
   '1/2 NPT',
+  'M18x1,5',
   'M20x1.5',
   'M27x2',
   'G 3/4 B',
