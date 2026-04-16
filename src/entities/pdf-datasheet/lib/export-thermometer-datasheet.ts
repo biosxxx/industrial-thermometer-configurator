@@ -1,7 +1,10 @@
 import { buildPdfPayload } from '@/entities/thermometer-config/lib/build-pdf-payload';
+import { selectPreviewBadges } from '@/entities/thermometer-config/model/selectors';
 import type {
   ThermometerConfiguratorState,
   PdfSectionRow,
+  PreviewBadge,
+  PreviewBadgeTone,
   TechnicalContentBlock,
 } from '@/entities/thermometer-config/model/types';
 import { addFooter } from '@/entities/pdf-datasheet/lib/add-footer';
@@ -9,9 +12,39 @@ import { capturePreview } from '@/entities/pdf-datasheet/lib/capture-preview';
 
 const SECTION_FILL = [240, 240, 240] as const;
 const CONTENT_WIDTH = 170;
+const COMPACT_SECTION_LAYOUT = {
+  headerHeight: 6,
+  headerTextYOffset: 4.4,
+  afterHeaderGap: 10,
+  rowHeight: 6,
+  sectionBottomGap: 3,
+} as const;
 const PREVIEW_BOX = {
   width: 170,
   height: 118,
+};
+
+const PREVIEW_BADGE_STYLES: Record<PreviewBadgeTone, { text: [number, number, number]; fill: [number, number, number]; border: [number, number, number]; }> = {
+  neutral: {
+    text: [30, 41, 59],
+    fill: [226, 232, 240],
+    border: [148, 163, 184],
+  },
+  accent: {
+    text: [154, 52, 18],
+    fill: [254, 215, 170],
+    border: [251, 146, 60],
+  },
+  info: {
+    text: [15, 23, 42],
+    fill: [186, 230, 253],
+    border: [56, 189, 248],
+  },
+  warning: {
+    text: [120, 53, 15],
+    fill: [253, 230, 138],
+    border: [245, 158, 11],
+  },
 };
 
 const renderSection = (
@@ -21,13 +54,15 @@ const renderSection = (
   margin: number,
   y: number,
 ) => {
+  const layout = COMPACT_SECTION_LAYOUT;
+
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(11);
   doc.setFillColor(...SECTION_FILL);
-  doc.rect(margin, y, 170, 7, 'F');
+  doc.rect(margin, y, 170, layout.headerHeight, 'F');
   doc.setTextColor(40);
-  doc.text(title.toUpperCase(), margin + 2, y + 5);
-  y += 12;
+  doc.text(title.toUpperCase(), margin + 2, y + layout.headerTextYOffset);
+  y += layout.afterHeaderGap;
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(10);
 
@@ -36,10 +71,10 @@ const renderSection = (
     doc.text(`${row.label}:`, margin + 5, y);
     doc.setTextColor(0);
     doc.text(row.value, margin + 75, y);
-    y += 7;
+    y += layout.rowHeight;
   });
 
-  return y + 5;
+  return y + layout.sectionBottomGap;
 };
 
 const renderTextSection = (
@@ -109,6 +144,55 @@ const fitImageIntoBox = (
     width: sourceWidth * scale,
     height: sourceHeight * scale,
   };
+};
+
+const renderPreviewBadges = (
+  doc: import('jspdf').jsPDF,
+  badges: PreviewBadge[],
+  margin: number,
+  maxWidth: number,
+  startY: number,
+) => {
+  if (!badges.length) {
+    return startY;
+  }
+
+  const rowHeight = 7;
+  const gapX = 2.6;
+  const gapY = 2.4;
+  const maxY = 270;
+  let x = margin;
+  let y = startY;
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(8.5);
+
+  for (const badge of badges) {
+    const label = badge.label.toUpperCase();
+    const textWidth = doc.getTextWidth(label);
+    const badgeWidth = Math.min(maxWidth, textWidth + 7.2);
+
+    if (x + badgeWidth > margin + maxWidth) {
+      x = margin;
+      y += rowHeight + gapY;
+    }
+
+    if (y + rowHeight > maxY) {
+      break;
+    }
+
+    const style = PREVIEW_BADGE_STYLES[badge.tone];
+    doc.setFillColor(...style.fill);
+    doc.setDrawColor(...style.border);
+    doc.setLineWidth(0.35);
+    doc.roundedRect(x, y, badgeWidth, rowHeight, 3.5, 3.5, 'FD');
+    doc.setTextColor(...style.text);
+    doc.text(label, x + 3.5, y + 4.75);
+
+    x += badgeWidth + gapX;
+  }
+
+  return y + rowHeight;
 };
 
 const renderTechnicalBlocksSection = async (
@@ -239,7 +323,9 @@ export const exportThermometerDatasheet = async (
 ) => {
   const [{ jsPDF }] = await Promise.all([import('jspdf')]);
   const payload = buildPdfPayload(config);
+  const previewBadges = selectPreviewBadges(config);
   const sketchImage = await capturePreview(previewElement);
+  const sketchImageFormat = sketchImage.startsWith('data:image/png') ? 'PNG' : 'JPEG';
 
   const doc = new jsPDF({
     orientation: 'p',
@@ -262,7 +348,7 @@ export const exportThermometerDatasheet = async (
   doc.text('INDUSTRIAL THERMOMETER SPECIFICATION', margin, y);
   y += 4;
   doc.line(margin, y, 190, y);
-  y += 12;
+  y += 10;
 
   y = renderSection(doc, '1. Project Data', payload.sections.projectData, margin, y);
   y = renderSection(doc, '2. Technical Specifications', payload.sections.technicalSpecifications, margin, y);
@@ -290,11 +376,14 @@ export const exportThermometerDatasheet = async (
   doc.setDrawColor(225, 232, 240);
   doc.setFillColor(255, 255, 255);
   doc.roundedRect(previewX - 4, previewY - 4, fittedPreview.width + 8, fittedPreview.height + 8, 4, 4, 'FD');
-  doc.addImage(sketchImage, 'JPEG', previewX, previewY, fittedPreview.width, fittedPreview.height);
+  doc.addImage(sketchImage, sketchImageFormat, previewX, previewY, fittedPreview.width, fittedPreview.height);
+
+  const badgesBottomY = renderPreviewBadges(doc, previewBadges, margin, CONTENT_WIDTH, previewY + fittedPreview.height + 10);
+
   doc.setFontSize(8);
   doc.setTextColor(150);
   payload.sketchNotes.forEach((note, index) => {
-    doc.text(note, margin, previewY + fittedPreview.height + 18 + index * 5);
+    doc.text(note, margin, badgesBottomY + 8 + index * 5);
   });
 
   const totalPages = doc.getNumberOfPages();
